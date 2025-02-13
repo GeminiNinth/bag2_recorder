@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+
+from bag2_recorder.bag2_launcher import main
+
+if __name__ == "__main__":
+    main()
