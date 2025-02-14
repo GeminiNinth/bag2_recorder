@@ -1,5 +1,15 @@
 # ROS2 Bag Recorder
 
+A ROS2 bag recording tool that allows you to specify topics to record using configuration files (`config/standard.config`) and control recording automatically or manually through launch file parameters.
+
+## Note
+
+Tested on ROS2 jazzy.
+
+This repository is a fork of the [bag_recorder](https://github.com/joshs333/bag_recorder.git) repository, which was originally implemented in C++ for ROS1.
+
+In this fork, the project has been migrated to ROS2 and reimplemented in Python instead of C++ (because I'm not very good at C++!).
+
 ## Installing/Running the Recorder
 Clone this repository into the src/ folder of a ROS2 workspace. In the ROS2 workspace run the following commands.
 ```bash
@@ -19,10 +29,96 @@ To use this ROS2 bag recorder you need to modify the launch file to fit your pro
 - `storage_format`: Storage format for rosbag (choices: ["mcap", "db3"], default: "mcap")
 - `seconds`: Recording duration in seconds (default: 10, set to 0 to record until manually stopped)
 - `start_now`: Whether to start recording automatically when launched (default: true)
+- `config_files`: List of configuration files to use (default: ["standard"])
+- `show_topics`: Whether to display the list of topics being recorded (default: false)
 
 If neither data_directory nor configuration_directory parameters are set then the node will not run.
 
-When `start_now` is set to true, the recorder will automatically start recording using the "standard" configuration and "auto_record" as the bag name. If `seconds` is greater than 0, the recording will automatically stop after the specified duration. Note that even with automatic stop enabled, you can still manually stop the recording at any time.
+When `start_now` is set to true, the recorder will automatically start recording using the specified configuration files and "auto_record" as the bag name. If `seconds` is greater than 0, the recording will automatically stop after the specified duration. Note that even with automatic stop enabled, you can still manually stop the recording at any time.
+
+### Example Output and Explanation
+Below are examples of standard output in various scenarios.
+
+#### 1. Normal Recording with Auto-stop
+```
+[INFO] [launch]: All log files can be found below /home/gemini-ninth/.ros/log/2025-02-13-21-35-07-228364-gemini-ninth-01-187395
+[INFO] [launch]: Default logging verbosity is set to INFO
+[INFO] [bag2_recorder_py_node-1]: process started with pid [187399]
+```
+↑ Basic startup information
+- Log file location
+- Log level setting
+- Process ID information
+
+```
+[bag2_recorder_py_node-1] [INFO] [1739450108.324657797] [rosbag2_recorder_node]: Found 1 topics in 'standard.config'
+[bag2_recorder_py_node-1] [INFO] [1739450108.324973709] [rosbag2_recorder_node]: Found 3 topics in 'special.config'
+[bag2_recorder_py_node-1] [INFO] [1739450108.325205883] [rosbag2_recorder_node]: 
+[bag2_recorder_py_node-1] Combined Topic Statistics:
+[bag2_recorder_py_node-1] Total topics specified across all files: 4
+[bag2_recorder_py_node-1] Unique topics: 4
+[bag2_recorder_py_node-1] Duplicate topics: 0
+[bag2_recorder_py_node-1] Topics to be recorded: 4
+```
+↑ Configuration file analysis results
+- Number of topics in each config file
+- Duplicate topic check results
+- Total number of topics to be recorded
+
+```
+[bag2_recorder_py_node-1] [INFO] [1739450109.375877486] [rosbag2_recorder_node]: Started recording with combined topics from configs: standard, special
+[bag2_recorder_py_node-1] [INFO] [1739450109.376203673] [rosbag2_recorder_node]: Auto-stop timer set for 30 seconds for config 'standard+special'
+```
+↑ Recording start notification
+- Configuration file combination being used
+- Auto-stop timer setting
+
+```
+[bag2_recorder_py_node-1] [INFO] [1739450139.497939370] [rosbag2_recorder_node]: Stopped recording for config 'standard+special' due to timeout (Recording duration: 30.0 seconds)
+[bag2_recorder_py_node-1] [INFO] [1739450139.498490484] [rosbag2_recorder_node]: Recording finished, requesting shutdown...
+[INFO] [bag2_recorder_py_node-1]: process has finished cleanly [pid 187399]
+```
+↑ Recording end notification
+- Reason for stopping (timeout in this case)
+- Actual recording duration
+- Clean process termination
+
+#### 2. Manual Stop Example
+```
+[bag2_recorder_py_node-1] [INFO] [1739450109.375877486] [rosbag2_recorder_node]: Started recording with combined topics from configs: standard, special
+[bag2_recorder_py_node-1] [INFO] [1739450112.497939370] [rosbag2_recorder_node]: Stopped recording for config 'standard+special' due to stop topic received (Recording duration: 3.1 seconds)
+[bag2_recorder_py_node-1] [INFO] [1739450112.498490484] [rosbag2_recorder_node]: Recording finished, requesting shutdown...
+```
+↑ Output when recording is stopped by receiving a stop topic
+
+#### 3. Configuration File Error Examples
+```
+[ERROR] [bag2_recorder_py_node-1]: Configuration file 'nonexistent.config' not found in directory '/home/gemini-ninth/ros2_ws/src/bag2_recorder/config'
+[ERROR] [bag2_recorder_py_node-1]: Failed to load configuration files
+[bag2_recorder_py_node-1]: process has finished with exit code 1
+```
+↑ Error when specifying a non-existent configuration file
+
+```
+[WARNING] [bag2_recorder_py_node-1]: Duplicate topic '/camera/image_raw' found in configs: standard.config, special.config
+[WARNING] [bag2_recorder_py_node-1]: Topic will only be recorded once
+```
+↑ Warning when the same topic is specified in multiple configuration files
+
+#### 4. Other Error Examples
+```
+[ERROR] [bag2_recorder_py_node-1]: Failed to create data directory: Permission denied
+[ERROR] [bag2_recorder_py_node-1]: Unable to initialize recorder
+[bag2_recorder_py_node-1]: process has finished with exit code 1
+```
+↑ Error when lacking permissions to create data directory
+
+```
+[ERROR] [bag2_recorder_py_node-1]: Failed to open bag file: Disk space full
+[ERROR] [bag2_recorder_py_node-1]: Recording failed
+[bag2_recorder_py_node-1]: process has finished with exit code 1
+```
+↑ Error due to insufficient disk space
 
 ## Storage Format
 ROS2 Jazzy supports two storage formats for rosbag files:
@@ -65,24 +161,34 @@ There are three ways to subscribe to all topics:
     
     Note: This will generate a warning log
 
-### Configuration File Linking
-You can include topics from other configuration files. For example, if you have a `standard.config`:
+### Multiple Configuration Files
+You can specify multiple configuration files in the launch file using the `config_files` parameter:
+```python
+config_files:=['standard', 'special']
 ```
-# Topics in standard.config
+
+When multiple configuration files are specified:
+1. The recorder combines topics from all specified files
+2. Duplicate topics are automatically removed
+3. The combined configuration is named using a '+' separator (e.g., "standard+special")
+4. Statistics about total, unique, and duplicate topics are displayed
+5. When stopping recording:
+   - Use `"data: standard+special"` to stop all recording
+   - Use `"data: standard"` to stop only topics from standard.config
+   - Use `"data: special"` to stop only topics from special.config
+
+Example configuration files:
+```bash
+# standard.config
 /topica
 /topicb
 /topicc
-```
 
-You can create a new configuration (e.g., `special.config`) that includes the standard topics plus additional ones:
+# special.config
+/extra/topic1
+/extra/topic2
+/extra/topic3
 ```
-# This is a special configuration
-/extra/topic
-# Include standard configuration
-$standard
-```
-
-Note: Circular references between configuration files (e.g., A references B which references A) are automatically detected and will generate a warning log.
 
 ### Comments
 You can write comments in the config file a few ways. With a '#' or a space at the beginning of the line. The parser ignores any blank lines or ones starting with ' ' or '#'.
@@ -137,7 +243,7 @@ int main(int argc, char** argv) {
     while(rclcpp::ok()) {
         RCLCPP_INFO(node->get_logger(), "Publishing...");
         bag_pub->publish(message);
-        rclcpp::spin_some(node);
+        rclpy::spin_some(node);
     }
 
     rclcpp::shutdown();
@@ -184,7 +290,12 @@ stop_bag_topic:=/record/stop
 ```
 To stop a recording of a certain configuration you can publish that configuration to stop_bag_topic. This topic uses std_msgs::msg::String type. Set this message's data value to the configuration you want to stop recording.
 
-This command looks like:
+For multiple configuration files:
+- Use `"data: standard+special"` to stop all recording
+- Use `"data: standard"` to stop only topics from standard.config
+- Use `"data: special"` to stop only topics from special.config
+
+Command example:
 ```bash
 ros2 topic pub /record/stop std_msgs/msg/String "data: standard" --times 5
 ```
@@ -209,7 +320,7 @@ int main(int argc, char** argv) {
     while(rclcpp::ok()) {
         RCLCPP_INFO(node->get_logger(), "Publishing...");
         bag_pub->publish(message);
-        rclcpp::spin_some(node);
+        rclpy::spin_some(node);
     }
 
     rclcpp::shutdown();
@@ -229,7 +340,7 @@ def main():
     rclpy.init()
     node = Node("test_node")
     
-    stop_pub = node.create_publisher(String, "/record/stop", 10)
+    bag_pub = node.create_publisher(String, "/record/stop", 10)
     
     message = String()
     message.data = "standard"
@@ -237,7 +348,7 @@ def main():
     try:
         while rclpy.ok():
             node.get_logger().info("Publishing...")
-            stop_pub.publish(message)
+            bag_pub.publish(message)
             rclpy.spin_once(node)
     except KeyboardInterrupt:
         pass
@@ -248,16 +359,47 @@ if __name__ == '__main__':
     main()
 ```
 
-## Notes
+## Troubleshooting
 
-Tested on ROS2 jazzy.
+### Common Errors and Solutions
 
-This repository is a fork of the [bag_recorder](https://github.com/joshs333/bag_recorder.git) repository, which was originally implemented in C++ for ROS1.
+#### 1. Configuration File Issues
+- **Error**: `Configuration file 'xxx.config' not found`
+  - **Cause**: Specified configuration file does not exist
+  - **Solution**: Verify the existence and location of the config file. By default, it should be in the package's config directory
 
-In this fork, the project has been migrated to ROS2 and reimplemented in Python instead of C++ (because I'm not very good at C++!).
+- **Warning**: `Duplicate topic found in configs`
+  - **Description**: Same topic specified in multiple configuration files
+  - **Impact**: Warning only. Topic will be recorded once
+
+#### 2. Directory Issues
+- **Error**: `Failed to create data directory: Permission denied`
+  - **Cause**: Lack of permissions to create data directory
+  - **Solution**: Check directory permissions and grant necessary access
+
+- **Error**: `Failed to open bag file: Disk space full`
+  - **Cause**: Insufficient disk space
+  - **Solution**: Free up space or specify a different disk location
+
+#### 3. Recording Control Issues
+- **Problem**: Recording won't start
+  - **Check**:
+    1. Correct topic type (/record/start: bag2_recorder/msg/Rosbag)
+    2. Correct message content (config, bag_name fields)
+    3. Using `--times 5` option
+
+- **Problem**: Recording won't stop
+  - **Check**:
+    1. Correct topic type (/record/stop: std_msgs/msg/String)
+    2. Correct configuration name (use '+' for combined configs)
+    3. Using `--times 5` option
 
 ## TODO
 - [ ] Add tests
 - [ ] Allow configuration file specification from default.launch.py arguments (considering interaction with bag_name in /record/start topic)
 - [ ] Automatically close active bag files when node is terminated with Ctrl + C
 - [ ] Fix issue where bag name is not displayed with `ros2 topic echo /record/bag_name`
+- [ ] Improve handling of multiple configuration files:
+  - [ ] Add ability to stop individual configurations when using combined recording
+  - [ ] Add support for "all" keyword to stop all recordings
+  - [ ] Better handling of configuration combinations

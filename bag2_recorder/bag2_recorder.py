@@ -35,17 +35,21 @@ class Bag2Recorder:
     - Serialization: Converting ROS messages to/from binary format
 
     Example Usage:
-        # Initialize the recorder
-        recorder = Bag2Recorder(node, "/path/to/bags")
+        >>> # Initialize the recorder
 
-        # Record specific topics
-        recorder.start_recording("my_recording", ["/cmd_vel", "/camera/image_raw"])
+        >>> recorder = Bag2Recorder(node, "/path/to/bags")
 
-        # Record all available topics
-        recorder.start_recording("all_topics", [], record_all_topics=True)
+        >>> # Record specific topics
 
-        # Stop recording when done
-        recorder.stop_recording()
+        >>> recorder.start_recording("my_recording", ["/cmd_vel", "/camera/image_raw"])
+
+        >>> # Record all available topics
+
+        >>> recorder.start_recording("all_topics", [], record_all_topics=True)
+
+        >>> # Stop recording when done
+
+        >>> recorder.stop_recording()
     """
 
     def __init__(

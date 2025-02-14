@@ -35,6 +35,12 @@ class BLOptions:
     start_now: bool = False
     finish_after_record: bool = True
     topic_discovery_timeout: float = 5.0
+    show_topics: bool = False
+    config_files: List[str] = None  # Default is None (uses standard config file)
+
+    def __post_init__(self):
+        if self.config_files is None:
+            self.config_files = ["standard"]
 
 
 class BagLauncher(Node):
@@ -44,6 +50,7 @@ class BagLauncher(Node):
         super().__init__("rosbag2_recorder_node")
 
         # Store options
+        self._options = options
         self._config_location = os.path.join(options.configuration_directory, "")
         self._data_folder = os.path.join(options.data_directory, "")
         self._storage_format = options.storage_format
@@ -102,13 +109,24 @@ class BagLauncher(Node):
         # Load topics from config
         topics: List[str] = []
         try:
-            if self._load_config(msg.config, topics):
-                full_bag_name = self._recorders[msg.config].start_recording(
-                    msg.bag_name, topics
-                )
-            else:
+            if not self._load_config(msg.config, topics):
                 self.get_logger().error(f"Failed to load config '{msg.config}'")
                 return
+
+            # Exit with warning if topic list is empty
+            if not topics:
+                self.get_logger().warn(
+                    f"No topics specified in config '{msg.config}', skipping this config"
+                )
+                return
+
+            # トピック数を表示
+            self.get_logger().info(
+                f"Found {len(topics)} topics in config '{msg.config}'"
+            )
+            full_bag_name = self._recorders[msg.config].start_recording(
+                msg.bag_name, topics
+            )
 
         except Exception as e:
             self.get_logger().error(
@@ -201,24 +219,16 @@ class BagLauncher(Node):
         topics: List[str],
         loaded_configs: Optional[Set[str]] = None,
     ) -> bool:
-        """Load topics from config file with support for linking and wildcards.
+        """Load topics from config files.
 
         Args:
             config_name: Name of the config file to load
             topics: List to store found topics
-            loaded_configs: Set to track loaded configs and prevent circular references
+            loaded_configs: Set to track loaded configs (unused in new implementation)
         """
-        if loaded_configs is None:
-            loaded_configs = set()
-
-        if config_name in loaded_configs:
-            self.get_logger().warn(
-                f"Circular reference detected for config '{config_name}', skipping"
-            )
-            return True
-
-        loaded_configs.add(config_name)
         filename = os.path.join(self._config_location, f"{config_name}.config")
+        total_topics = set()  # Store all topics
+        file_topics: Dict[str, List[str]] = {}  # Store topics for each file
 
         try:
             with open(filename, "r") as f:
@@ -231,41 +241,120 @@ class BagLauncher(Node):
                 ]
 
                 if not lines:
-                    self.get_logger().info(
-                        f"Config file '{filename}' is empty, subscribing to all topics"
-                    )
-                    topics.append("*")
+                    self.get_logger().warn(f"Config file '{filename}' is empty")
+                    file_topics[config_name] = []
                     return True
 
+                file_topics[config_name] = []
                 for line in lines:
                     if line == "*":
-                        topics.clear()  # Clear any previously loaded topics
+                        self.get_logger().info(
+                            f"Wildcard (*) detected in '{filename}', will record all topics"
+                        )
+                        topics.clear()
                         topics.append("*")
                         return True
-                    elif line.startswith("$"):
-                        # Load linked config
-                        linked_config = line[1:]  # Remove $ prefix
-                        if not self._load_config(linked_config, topics, loaded_configs):
-                            self.get_logger().error(
-                                f"Failed to load linked config '{linked_config}'"
-                            )
-                            return False
                     else:
-                        topics.append(self._sanitize_topic(line))
+                        sanitized_topic = self._sanitize_topic(line)
+                        topics.append(sanitized_topic)
+                        file_topics[config_name].append(sanitized_topic)
+                        total_topics.add(sanitized_topic)
+
+                # Display only the number of topics
+                self.get_logger().info(
+                    f"Found {len(file_topics[config_name])} topics in '{config_name}.config'"
+                )
+
                 return True
+
         except FileNotFoundError:
-            self.get_logger().warn(
-                f"Config file '{filename}' not found, subscribing to all topics"
-            )
-            topics.append("*")
-            return True
+            self.get_logger().error(f"Config file '{filename}' not found")
+            return False
 
     def _auto_start_recording(self):
         """Start recording automatically."""
+        all_topics = []  # Accumulate topics from all config files
+        valid_configs = []  # Config files with valid topics
+        total_topics = set()  # Set of unique topics
+
+        # Collect topics from all config files
+        for config_file in self._options.config_files:
+            topics = []
+            if self._load_config(config_file, topics):
+                if topics:  # トピックが存在する場合
+                    all_topics.extend(topics)
+                    valid_configs.append(config_file)
+                    total_topics.update(topics)
+
+        # 統計情報の表示
+        total_specified = len(all_topics)
+        unique_topics = len(total_topics)
+        duplicate_topics = total_specified - unique_topics
+
+        self.get_logger().info(
+            f"\nCombined Topic Statistics:\n"
+            f"Total topics specified across all files: {total_specified}\n"
+            f"Unique topics: {unique_topics}\n"
+            f"Duplicate topics: {duplicate_topics}\n"
+            f"Topics to be recorded: {unique_topics}"
+            + (
+                f":\n{chr(10).join(sorted(total_topics))}"
+                if self._options.show_topics
+                else ""
+            )
+        )
+
+        # If no valid topics found
+        if not total_topics:
+            self.get_logger().warn("No valid topics found in any config files")
+            self.get_logger().info("Recording finished, requesting shutdown...")
+            self._shutdown_requested = True
+            self.create_timer(0.1, self._delayed_shutdown)
+            return
+
+        # Start recording with combined topics
+        combined_config = "+".join(valid_configs)  # Combine valid config names
         msg = Rosbag()
-        msg.config = "standard"
+        msg.config = combined_config
         msg.bag_name = "auto_record"
-        self._start_recording_callback(msg)
+
+        # Create new recorder instance
+        self._recorders[combined_config] = Bag2Recorder(
+            self,
+            self._data_folder,
+            self._storage_format,
+            True,
+            self._topic_discovery_timeout,
+        )
+
+        # Allow referencing the same recorder by individual config names
+        for config in valid_configs:
+            self._recorders[config] = self._recorders[combined_config]
+
+        # Start recording
+        full_bag_name = self._recorders[combined_config].start_recording(
+            msg.bag_name, sorted(total_topics)
+        )
+
+        if full_bag_name:
+            self._recording_start_times[combined_config] = (
+                self.get_clock().now().nanoseconds
+            )
+            # Record the same start time for individual config names
+            for config in valid_configs:
+                self._recording_start_times[config] = self._recording_start_times[
+                    combined_config
+                ]
+
+            self.get_logger().info(
+                f"Started recording with combined topics from configs: {', '.join(valid_configs)}"
+            )
+            if self._seconds > 0:
+                self._setup_auto_stop_timer(combined_config)
+        else:
+            self.get_logger().error("Failed to start recording")
+            self._shutdown_requested = True
+            self.create_timer(0.1, self._delayed_shutdown)
 
     def _setup_auto_stop_timer(self, config: str):
         """Setup timer for automatic recording stop."""
@@ -318,6 +407,8 @@ def main(args=None):
             temp_node.declare_parameter(
                 "topic_discovery_timeout", default_options.topic_discovery_timeout
             )
+            temp_node.declare_parameter("show_topics", default_options.show_topics)
+            temp_node.declare_parameter("config_files", "standard")
 
             # Create options and update from parameters
             options = BLOptions(
@@ -338,6 +429,12 @@ def main(args=None):
                 topic_discovery_timeout=float(
                     temp_node.get_parameter("topic_discovery_timeout").value
                 ),
+                show_topics=temp_node.get_parameter("show_topics").value,
+                config_files=[
+                    x.strip()
+                    for x in temp_node.get_parameter("config_files").value.split(",")
+                    if x.strip()  # Exclude empty elements (handles trailing commas)
+                ],
             )
 
             # Cleanup temporary node

@@ -81,6 +81,18 @@ def generate_launch_description():
         default_value="5.0",
         description="Maximum time (seconds) to wait for configured topics to become available",
     )
+    config_files_arg = DeclareLaunchArgument(
+        "config_files",
+        # default_value="standard",
+        default_value="standard,special",
+        description="Comma-separated list of config files to read (without .config extension). Default is standard.config only",
+    )
+
+    show_topics_arg = DeclareLaunchArgument(
+        "show_topics",
+        default_value="false",
+        description="If true, shows the list of topics found in each config file",
+    )
 
     # Node restart configuration
     # Automatically determined based on `finish_after_record` arg
@@ -115,6 +127,8 @@ def generate_launch_description():
                 "topic_discovery_timeout": LaunchConfiguration(
                     "topic_discovery_timeout"
                 ),
+                "config_files": LaunchConfiguration("config_files"),
+                "show_topics": LaunchConfiguration("show_topics"),
             }
         ],
         output="screen",
@@ -135,6 +149,8 @@ def generate_launch_description():
             start_now_arg,
             finish_after_record_arg,
             topic_discovery_timeout_arg,
+            config_files_arg,
+            show_topics_arg,
             bag2_recorder_node,
         ]
     )
