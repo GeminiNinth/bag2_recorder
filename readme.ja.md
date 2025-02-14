@@ -1,16 +1,16 @@
 # ROS2 Bag Recorder
 
-ROS2向けのbagレコーダーツール。
+ROS2向けのbagレコーダーツールである。
 
-設定ファイル（`config/standard.config`）で記録対象のトピックを指定し、launchファイルのパラメータにより自動または手動で記録を制御する。
+設定ファイル（`config/standard.config`）で記録対象のトピックを指定し、launchファイルのパラメータにより自動または手動で記録を制御することができる。
 
 ## 特記
 
-ROS2 jazzyにおいて動作確認済み。
+ROS2 jazzyにおいて動作確認済みである。
 
 このリポジトリは、もともとROS1用のC++で実装された[bag_recorder](https://github.com/joshs333/bag_recorder.git)リポジトリをフォークしたものである。
 
-フォークにあたり、ROS2への移行および実装言語をC++からPythonへ変更した。（私はC++が苦手なので！）
+フォークにあたり、ROS2への移行および実装言語をC++からPythonへ変更した。（C++が苦手なためである）
 
 # インストール方法と実行方法
 ROS2ワークスペースのsrc/ディレクトリに本リポジトリをクローンする。その後、以下のコマンドを実行する。
@@ -60,12 +60,45 @@ ros2 launch bag2_recorder default.launch.py storage_format:=mcap  # または st
 /topic4
 ```
 
-
-
 ### 全トピックの購読
-全トピックを購読する場合は、launchファイルのパラメータで`record_all_topics`を`true`に設定する必要がある。
 
-注意：ROS1版の`bag_recorder`では設定ファイルに`*`を記述することで全トピックを購読できましたが、本実装では設定ファイルからの全トピック購読指定はサポートしてい。また、ROS1版にあった設定ファイル間のリンク機能（例：`$standard`による他の設定ファイルの内容の取り込み）も実装されていません。
+全トピックを購読する場合は、以下のいずれかの方法を使用することができる
+
+1. 設定ファイルに以下の1行を記述する：
+    ```
+    *
+    ```
+
+2. 設定ファイルを空にする（コメントのみの場合も空とみなされる）
+
+    ```bash
+    # コメントのみなので、空とみなされる
+    ```
+
+3. 設定ファイルを作成しない
+
+    この場合、警告ログが出力される
+
+### 設定ファイルのリンク
+他の設定ファイルの内容を取り込むことができる。例えば、以下のような`standard.config`があるとする：
+```
+# `standard.config`内の設定
+/topica
+/topicb
+/topicc
+```
+
+新しい設定ファイル（例：`special.config`）で標準設定に加えて追加のトピックを記録したい場合、以下のように記述することができる：
+```
+# これは特別設定である
+/extra/topic
+# 標準設定を取り込む
+$standard
+```
+
+これにより、`special.config`では`standard.config`のトピックに加えて、`/extra/topic`も記録対象となる。
+
+なお、設定ファイルの循環参照（例：AがBを参照し、BがAを参照する）は自動的に検出され、警告ログが出力される。
 
 ### コメントの記述
 設定ファイルでは、行頭に'#'または空白文字を使用してコメントを記述できる。パーサーは空行や' '、'#'で始まる行を無視する。
@@ -75,8 +108,8 @@ ros2 launch bag2_recorder default.launch.py storage_format:=mcap  # または st
 /This/will/be/subscribed/to
 ```
 
-## レコーダーの制御
-### 記録開始
+# レコーダーの制御
+## 記録開始
 開始トピックはlaunchファイルで設定する：
 ```python
 start_bag_topic:=/record/start
@@ -88,6 +121,12 @@ start_bag_topic:=/record/start
 コマンド例：
 ```bash
 ros2 topic pub /record/start bag2_recorder/msg/Rosbag "{config: 'standard', bag_name: 'test_bag'}"
+```
+
+`--once`オプションを使用するとトピックの送出が1回だけ行われるが、うまくいかない場合がある。`--times 5`などで複数回に分けて送信することをお勧めする。
+
+```bash
+ros2 topic pub /record/start bag2_recorder/msg/Rosbag "{config: 'standard', bag_name: 'test_bag'}" --times 5
 ```
 
 完全なバッグファイル名を確認するには、以下のlaunchオプションを使用する：
@@ -162,7 +201,7 @@ if __name__ == '__main__':
     main()
 ```
 
-### 記録停止
+## 記録停止
 停止トピックもlaunchファイルで定義する：
 ```python
 stop_bag_topic:=/record/stop
@@ -172,6 +211,12 @@ stop_bag_topic:=/record/stop
 コマンド例：
 ```bash
 ros2 topic pub /record/stop std_msgs/msg/String "data: standard"
+```
+
+`--once`オプションを使用するとトピックの送出が1回だけ行われるが、うまくいかない場合がある。`--times 5`などで複数回に分けて送信することをお勧めする。
+
+```bash
+ros2 topic pub /record/stop std_msgs/msg/String "data: standard" --times 5
 ```
 
 ### プログラムからの記録停止(C++)
@@ -232,3 +277,8 @@ if __name__ == '__main__':
     main()
 ```
 
+# TODO
+- [ ] テストの追加
+- [ ] defalut.launch.pyの引数から設定ファイルを指定できるようにする。（ただし`/record/start`トピックの`bag_name`との兼ね合いも考慮する必要あり）
+- [ ] Ctrl + Cでノードを終了した際に、記録中のバッグファイルを自動で閉じるようにする
+- [ ] `ros2 topic echo /record/bag_name`でバッグ名が表示されない問題を解決する

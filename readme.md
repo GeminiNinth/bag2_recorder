@@ -17,7 +17,7 @@ To use this ROS2 bag recorder you need to modify the launch file to fit your pro
 - `data_directory`: Directory where the bags will be stored (default: ~/data/)
 - `configuration_directory`: Directory containing configuration files (default: package's config directory)
 - `storage_format`: Storage format for rosbag (choices: ["mcap", "db3"], default: "mcap")
-- `seconds`: Recording duration in seconds (default: 3, set to 0 to record until manually stopped)
+- `seconds`: Recording duration in seconds (default: 10, set to 0 to record until manually stopped)
 - `start_now`: Whether to start recording automatically when launched (default: true)
 
 If neither data_directory nor configuration_directory parameters are set then the node will not run.
@@ -49,11 +49,40 @@ Here is an example *standard.config*
 ```
 
 ### Subscribe to All Topics
-If you wanted this "standard" configuration to subscribe to all topics it could be the following:
+There are three ways to subscribe to all topics:
+
+1. Add a single asterisk line to the config file:
+    ```
+    *
+    ```
+
+2. Leave the config file empty (or with comments only):
+    ```bash
+    # Comments only, treated as empty
+    ```
+
+3. Don't create a config file
+    
+    Note: This will generate a warning log
+
+### Configuration File Linking
+You can include topics from other configuration files. For example, if you have a `standard.config`:
 ```
-*
+# Topics in standard.config
+/topica
+/topicb
+/topicc
 ```
-A single line containing an asterisk. Note that current behavior also subscribes to all topics when the config file doesn't exist or is empty.
+
+You can create a new configuration (e.g., `special.config`) that includes the standard topics plus additional ones:
+```
+# This is a special configuration
+/extra/topic
+# Include standard configuration
+$standard
+```
+
+Note: Circular references between configuration files (e.g., A references B which references A) are automatically detected and will generate a warning log.
 
 ### Comments
 You can write comments in the config file a few ways. With a '#' or a space at the beginning of the line. The parser ignores any blank lines or ones starting with ' ' or '#'.
@@ -72,8 +101,9 @@ You can start the recorder by publishing to this topic with the rosbag message t
 
 This command looks like:
 ```bash
-ros2 topic pub /record/start bag2_recorder/msg/Rosbag "{config: 'standard', bag_name: 'test_bag'}"
+ros2 topic pub /record/start bag2_recorder/msg/Rosbag "{config: 'standard', bag_name: 'test_bag'}" --times 5
 ```
+Note: Using `--times 5` is recommended over `--once` as it ensures reliable message delivery.
 
 To see what the full bag name is you can use the bag name publisher. To do this use the following launch options:
 ```python
@@ -85,6 +115,34 @@ This will publish the full bag name to name_topic.
 To see this data you must echo this topic in another terminal window before the start command is sent:
 ```bash
 ros2 topic echo /record/bag_name
+```
+
+### Starting the recorder programmatically (C++)
+Here's an example of how to start recording using C++:
+
+```cpp
+#include <rclcpp/rclcpp.hpp>
+#include "bag2_recorder/msg/rosbag.hpp"
+
+int main(int argc, char** argv) {
+    rclcpp::init(argc, argv);
+    auto node = std::make_shared<rclcpp::Node>("test_node");
+    
+    auto bag_pub = node->create_publisher<bag2_recorder::msg::Rosbag>("/record/start", 10);
+
+    auto message = bag2_recorder::msg::Rosbag();
+    message.config = "standard";
+    message.bag_name = "test_bag";
+
+    while(rclcpp::ok()) {
+        RCLCPP_INFO(node->get_logger(), "Publishing...");
+        bag_pub->publish(message);
+        rclcpp::spin_some(node);
+    }
+
+    rclcpp::shutdown();
+    return 0;
+}
 ```
 
 ### Starting the recorder programmatically (Python)
@@ -128,11 +186,39 @@ To stop a recording of a certain configuration you can publish that configuratio
 
 This command looks like:
 ```bash
-ros2 topic pub /record/stop std_msgs/msg/String "data: standard"
+ros2 topic pub /record/stop std_msgs/msg/String "data: standard" --times 5
+```
+Note: Using `--times 5` is recommended over `--once` as it ensures reliable message delivery.
+
+### Stopping the recorder programmatically (C++)
+Here's an example of how to stop recording using C++:
+
+```cpp
+#include <rclcpp/rclcpp.hpp>
+#include "std_msgs/msg/string.hpp"
+
+int main(int argc, char** argv) {
+    rclcpp::init(argc, argv);
+    auto node = std::make_shared<rclcpp::Node>("test_node");
+    
+    auto bag_pub = node->create_publisher<std_msgs::msg::String>("/record/stop", 10);
+
+    auto message = std_msgs::msg::String();
+    message.data = "standard";
+
+    while(rclcpp::ok()) {
+        RCLCPP_INFO(node->get_logger(), "Publishing...");
+        bag_pub->publish(message);
+        rclcpp::spin_some(node);
+    }
+
+    rclcpp::shutdown();
+    return 0;
+}
 ```
 
 ### Stopping the recorder programmatically (Python)
-Here's an example of how to stop recording programmatically:
+Here's an example of how to stop recording using Python:
 
 ```python
 import rclpy
@@ -169,3 +255,9 @@ Tested on ROS2 jazzy.
 This repository is a fork of the [bag_recorder](https://github.com/joshs333/bag_recorder.git) repository, which was originally implemented in C++ for ROS1.
 
 In this fork, the project has been migrated to ROS2 and reimplemented in Python instead of C++ (because I'm not very good at C++!).
+
+## TODO
+- [ ] Add tests
+- [ ] Allow configuration file specification from default.launch.py arguments (considering interaction with bag_name in /record/start topic)
+- [ ] Automatically close active bag files when node is terminated with Ctrl + C
+- [ ] Fix issue where bag name is not displayed with `ros2 topic echo /record/bag_name`

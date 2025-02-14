@@ -175,17 +175,20 @@ class Bag2Recorder:
                 name: types[0] for name, types in topic_names_and_types if types
             }
 
-            # Set up subscriptions based on recording mode
-            if record_all_topics:
-                # Subscribe to all available topics
+            # Set up subscriptions
+            if not topics:
+                # Empty topic list means subscribe to all
+                for topic_name, topic_type in topic_dict.items():
+                    self._subscribe_to_topic(topic_name, topic_type)
+            elif len(topics) == 1 and topics[0] == "*":
+                # Wildcard means subscribe to all
                 for topic_name, topic_type in topic_dict.items():
                     self._subscribe_to_topic(topic_name, topic_type)
             else:
                 # Subscribe only to specified topics
                 for topic in topics:
-                    if topic != "*":  # Skip wildcard entries
-                        topic_type = topic_dict.get(topic, "")
-                        self._subscribe_to_topic(topic, topic_type)
+                    topic_type = topic_dict.get(topic, "")
+                    self._subscribe_to_topic(topic, topic_type)
 
             self._bag_active = True
             return self._bag_filename

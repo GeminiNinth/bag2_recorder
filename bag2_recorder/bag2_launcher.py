@@ -8,7 +8,7 @@ from bag2_recorder.msg import Rosbag
 from .bag2_recorder import Bag2Recorder
 
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 from dataclasses import dataclass
 from enum import Enum, auto
 
@@ -195,21 +195,70 @@ class BagLauncher(Node):
         except Exception as e:
             self.get_logger().error(f"Error during shutdown: {str(e)}")
 
-    def _load_config(self, config_name: str, topics: List[str]) -> bool:
-        """Load topics from config file."""
+    def _load_config(
+        self,
+        config_name: str,
+        topics: List[str],
+        loaded_configs: Optional[Set[str]] = None,
+    ) -> bool:
+        """Load topics from config file with support for linking and wildcards.
+
+        Args:
+            config_name: Name of the config file to load
+            topics: List to store found topics
+            loaded_configs: Set to track loaded configs and prevent circular references
+        """
+        if loaded_configs is None:
+            loaded_configs = set()
+
+        if config_name in loaded_configs:
+            self.get_logger().warn(
+                f"Circular reference detected for config '{config_name}', skipping"
+            )
+            return True
+
+        loaded_configs.add(config_name)
         filename = os.path.join(self._config_location, f"{config_name}.config")
 
         try:
             with open(filename, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    topics.append(self._sanitize_topic(line))
+                lines = [line.strip() for line in f.readlines()]
+                # Filter out empty lines and comments
+                lines = [
+                    line
+                    for line in lines
+                    if line and not line.startswith("#") and not line.startswith(" ")
+                ]
+
+                if not lines:
+                    self.get_logger().info(
+                        f"Config file '{filename}' is empty, subscribing to all topics"
+                    )
+                    topics.append("*")
+                    return True
+
+                for line in lines:
+                    if line == "*":
+                        topics.clear()  # Clear any previously loaded topics
+                        topics.append("*")
+                        return True
+                    elif line.startswith("$"):
+                        # Load linked config
+                        linked_config = line[1:]  # Remove $ prefix
+                        if not self._load_config(linked_config, topics, loaded_configs):
+                            self.get_logger().error(
+                                f"Failed to load linked config '{linked_config}'"
+                            )
+                            return False
+                    else:
+                        topics.append(self._sanitize_topic(line))
                 return True
         except FileNotFoundError:
-            self.get_logger().error(f"Config file '{filename}' not found")
-            return False
+            self.get_logger().warn(
+                f"Config file '{filename}' not found, subscribing to all topics"
+            )
+            topics.append("*")
+            return True
 
     def _auto_start_recording(self):
         """Start recording automatically."""
